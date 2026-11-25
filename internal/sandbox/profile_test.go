@@ -289,7 +289,6 @@ func TestProfileContent(t *testing.T) {
 		`deny file-write*`,
 		`oym-ai-jail`,
 		`.zshrc`,
-		`/Users/jane/.config/gh`,               // credential read-deny
 		`/Users/jane/.gnupg/private-keys-v1.d`, // gpg key material
 		`/Users/jane/.docker/cli-plugins`,      // poison dir
 		`/Users/jane/.local/share/claude`,      // symlinked agent binary
@@ -304,6 +303,70 @@ func TestProfileContent(t *testing.T) {
 
 	if lastDeny < lastAllow {
 		t.Fatalf("self-protection deny is not last:\n%s", profile)
+	}
+}
+
+// gh/glab tokens normally live in the macOS keychain, so their config dirs
+// stay readable — denying them would break the tools while protecting
+// nothing. Only when a plaintext token is found in the file itself does the
+// deny apply.
+func TestPlaintextTokenDenies(t *testing.T) {
+	home := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(home, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Keychain-backed: hosts.yml holds metadata only — no deny.
+	write(".config/gh/hosts.yml", "github.com:\n    user: jane\n    git_protocol: ssh\n")
+	if deny, _ := classifyTokenDirs(home); len(deny) != 0 {
+		t.Fatalf("keychain-only setup should yield no denies, got %v", deny)
+	}
+
+	// Plaintext storage (--insecure-storage or old gh) — deny kicks in.
+	write(".config/gh/hosts.yml", "github.com:\n    user: jane\n    oauth_token: gho_secret\n")
+	deny, _ := classifyTokenDirs(home)
+	if len(deny) != 1 || !strings.HasSuffix(deny[0], ".config/gh") {
+		t.Fatalf("plaintext token should yield gh deny, got %v", deny)
+	}
+
+	// glab with inline token is detected independently; empty values are not secrets.
+	write("Library/Application Support/glab-cli/config.yml", "hosts:\n  gitlab.com:\n    job_token:\n")
+	if deny, _ := classifyTokenDirs(home); len(deny) != 1 {
+		t.Fatalf("empty job_token is not a secret, got %v", deny)
+	}
+	write("Library/Application Support/glab-cli/config.yml", "hosts:\n  gitlab.com:\n    token: glpat-secret\n")
+	deny, _ = classifyTokenDirs(home)
+	if len(deny) != 2 {
+		t.Fatalf("expected gh + glab denies, got %v", deny)
+	}
+
+	// A clean glab dir is opened read-only instead, so the tool still works.
+	write(".config/gh/hosts.yml", "github.com:\n    user: jane\n")
+	write("Library/Application Support/glab-cli/config.yml", "hosts:\n  gitlab.com:\n    user: jane\n")
+	deny, ro := classifyTokenDirs(home)
+	if len(deny) != 0 || len(ro) != 1 || !strings.HasSuffix(ro[0], "glab-cli") {
+		t.Fatalf("clean setup: deny=%v ro=%v", deny, ro)
+	}
+
+	// docker: keychain-backed credsStore is fine, plaintext auth is not.
+	write(".docker/config.json", `{"credsStore":"osxkeychain","auths":{}}`)
+	if deny, _ := classifyTokenDirs(home); len(deny) != 0 {
+		t.Fatalf("credsStore-only docker config should be fine, got %v", deny)
+	}
+	write(".docker/config.json", `{"auths":{"https://index.docker.io/v1/":{"auth":"dXNlcjpwYXNz"}}}`)
+	if deny, _ := classifyTokenDirs(home); len(deny) != 1 {
+		t.Fatalf("plaintext docker auth should be denied, got %v", deny)
+	}
+	// An empty auth value is not a secret.
+	write(".docker/config.json", `{"auths":{"https://index.docker.io/v1/":{"auth":""}}}`)
+	if deny, _ := classifyTokenDirs(home); len(deny) != 0 {
+		t.Fatalf("empty docker auth is not a secret, got %v", deny)
 	}
 }
 

@@ -5,6 +5,28 @@ SemVer tags; binaries ship via GitHub Releases (`oym-ai-jail update`).
 
 ## [Unreleased]
 
+## [v0.2.0] - 2026-11-25
+
+### Changed
+
+- `~/.config/gh` and `~/.config/glab-cli` are no longer unconditionally
+  unreadable inside the jail. On macOS these tools keep tokens in the OS
+  keychain — beyond Seatbelt's reach either way — so the deny broke `gh`
+  and `glab` without protecting anything. The deny now applies only when a
+  plaintext token is actually detected in the config file (e.g.
+  `--insecure-storage` or missing keyring). Clean config dirs are opened
+  read-only instead, so `glab`'s real macOS config location
+  (`~/Library/Application Support/glab-cli`) is visible enough for the
+  tool to work.
+
+### Added
+
+- Docker's `~/.docker/config.json` gets the same treatment: readable when
+  credentials live in a `credsStore` helper, sealed when plaintext `auth`
+  entries are found.
+- `oym-ai-jail status` now warns about plaintext credentials it seals off,
+  with the re-login hint that moves them into the macOS keychain.
+
 ## [v0.1.0] - 2026-11-25
 
 ### Added

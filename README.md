@@ -144,15 +144,26 @@ the honest threat model:
   wrappers, and treat direct `command claude` / IDE-spawned sessions as
   trusted operations.
 - **Some credentials are still reachable** — e.g. the login keychain file and
-  agent tokens (`~/.claude` must stay writable for the agent to work). The
-  worst offenders are outright unreadable (`~/.config/gh` and friends, GPG
-  private keys, VM ssh keys under `~/.lima`/`~/.colima`), at the cost of `gh`
-  not working inside the jail — extend with `deny_read_paths`.
+  agent tokens (`~/.claude` must stay writable for the agent to work).
+  File-based secrets are outright unreadable (GPG private keys, cloud CLI
+  credentials, VM ssh keys under `~/.lima`/`~/.colima`) — extend with
+  `deny_read_paths`. Note the keychain caveat below.
   Package-manager caches (`~/.npm`, `~/.m2/repository`, `~/go/pkg`, cargo
   registry, gradle caches, …) are writable by necessity: downloaded
   dependency code executes at build time anyway, in and out of the jail. And
   a determined agent can still read whatever else the profile allows and
   send it out over the open network.
+- **`gh`, `glab` and `docker` work inside the jail, and their tokens are
+  reachable there.** On macOS these tools store credentials in the OS
+  keychain, not in their config files — and the keychain is IPC to
+  `securityd`, which Seatbelt file rules cannot mediate. Denying the config
+  files broke the tools while protecting nothing, so they're not denied
+  *unless* a plaintext credential is actually found in the config file
+  (older versions, `--insecure-storage`, no keyring/`credsStore`) — then
+  the deny applies and the tool stops working inside the jail. `oym-ai-jail
+  status` warns when it detects this, with the re-login hint that moves the
+  credential into the keychain. Either way: treat anything the keychain
+  unlocks as in-scope for a jailed agent, same as the ssh-agent.
 
 The practical takeaway: the jail is very good at "the agent can't break or
 steal from places you haven't allowed" and mediocre at "the agent can't talk

@@ -102,17 +102,15 @@ var poisonSubpaths = []string{
 }
 
 // denyReadDefaults may never even be read inside the jail: credentials whose
-// theft beats a missing feature (`gh` stops working inside the jail; GPG
-// signing still works through the agent socket). Users extend this list with
-// deny_read_paths in config.yaml — the baseline always applies.
+// theft beats a missing feature (GPG signing still works through the agent
+// socket). Users extend this list with deny_read_paths in config.yaml — the
+// baseline always applies.
 var denyReadDefaults = []string{
-	"~/.config/gh",       // GitHub OAuth tokens
-	"~/.config/glab-cli", // GitLab CLI
-	"~/.config/hub",      // legacy GitHub CLI
-	"~/.config/gcloud",   // GCP credentials + access tokens
-	"~/.config/rclone",   // rclone.conf holds every remote's secret
-	"~/.config/doctl",    // DigitalOcean
-	"~/.config/hcloud",   // Hetzner
+	"~/.config/hub",    // legacy GitHub CLI — always plaintext tokens
+	"~/.config/gcloud", // GCP credentials + access tokens
+	"~/.config/rclone", // rclone.conf holds every remote's secret
+	"~/.config/doctl",  // DigitalOcean
+	"~/.config/hcloud", // Hetzner
 	"~/.config/linode-cli",
 	"~/.config/helm",                 // registry auth
 	"~/.config/containers/auth.json", // podman registry creds
@@ -130,6 +128,91 @@ var denyReadDefaults = []string{
 	"~/.lima/_config",                      // lima ssh keys + network config
 	"~/.gnupg/private-keys-v1.d",           // OpenPGP private key material
 	"~/.gnupg/secring.gpg",                 // legacy private keyring
+}
+
+// conditionalTokenFiles are inspected while building the profile. gh, glab
+// and docker store credentials in the OS keychain by default on macOS; their
+// config files then carry no secrets, so denying them would break the tools
+// while protecting nothing — the keychain itself is beyond Seatbelt's reach
+// either way (IPC to securityd, not file access). When a plaintext token IS
+// present (older versions, --insecure-storage, no keyring/credsStore) the
+// file is a real credential: the deny applies and the tool stops working
+// inside the jail.
+var conditionalTokenFiles = []struct {
+	tool    string // display name for warnings
+	file    string // config file to inspect
+	dir     string // config dir to deny or open read-only
+	roAllow bool   // whether a clean dir needs an explicit ro rule (not yet covered)
+	hint    string // remediation shown in `oym-ai-jail status`
+}{
+	{"gh", "~/.config/gh/hosts.yml", "~/.config/gh", false,
+		"run `gh auth login` again to move the token into the macOS keychain"},
+	{"glab", "~/.config/glab-cli/config.yml", "~/.config/glab-cli", false,
+		"run `glab auth login` again to move the token into the macOS keychain"},
+	{"glab", "~/Library/Application Support/glab-cli/config.yml", "~/Library/Application Support/glab-cli", true,
+		"run `glab auth login` again to move the token into the macOS keychain"},
+	{"docker", "~/.docker/config.json", "~/.docker/config.json", false,
+		`enable a credential helper ("credsStore": "osxkeychain") and run docker login again`},
+}
+
+// tokenSecretRe matches non-empty inline token values in gh/glab YAML.
+// Horizontal whitespace only — \s would eat the newline after an empty
+// "token:" and match the next line's first character as a "value".
+var tokenSecretRe = regexp.MustCompile(`(?m)^[ \t]*(oauth_token|token|job_token):[ \t]*\S`)
+
+// dockerPlaintextAuthRe matches a non-empty "auth" entry in docker's JSON
+// config — base64-encoded user:password for a registry.
+var dockerPlaintextAuthRe = regexp.MustCompile(`"auth"\s*:\s*"[^"]+"`)
+
+// PlaintextTokenRisk describes one tool whose config currently holds a
+// plaintext credential that the jail will seal off.
+type PlaintextTokenRisk struct {
+	Tool string
+	File string
+	Hint string
+}
+
+// DetectPlaintextTokens inspects every conditionalTokenFiles entry and
+// reports which hold plaintext secrets. Runs outside the sandbox while
+// building the profile, so the files are readable here.
+func DetectPlaintextTokens(home string) []PlaintextTokenRisk {
+	var out []PlaintextTokenRisk
+	for _, c := range conditionalTokenFiles {
+		full := config.Canonical(c.file, home)
+		data, err := os.ReadFile(full)
+		if err != nil {
+			continue // not installed or not configured — nothing to do
+		}
+		matched := tokenSecretRe.Match(data)
+		if c.tool == "docker" {
+			matched = dockerPlaintextAuthRe.Match(data)
+		}
+		if matched {
+			out = append(out, PlaintextTokenRisk{Tool: c.tool, File: full, Hint: c.hint})
+		}
+	}
+	return out
+}
+
+// classifyTokenDirs splits conditionalTokenFiles into dirs holding plaintext
+// secrets (deny) and clean dirs the tools need readable (ro).
+func classifyTokenDirs(home string) (deny, ro []string) {
+	risks := map[string]bool{}
+	for _, r := range DetectPlaintextTokens(home) {
+		risks[r.File] = true
+	}
+	for _, c := range conditionalTokenFiles {
+		full := config.Canonical(c.file, home)
+		if _, err := os.Stat(full); err != nil {
+			continue
+		}
+		if risks[full] {
+			deny = append(deny, config.Canonical(c.dir, home))
+		} else if c.roAllow {
+			ro = append(ro, config.Canonical(c.dir, home))
+		}
+	}
+	return deny, ro
 }
 
 // devLiterals are the pseudo devices a jailed process may write — the rest
@@ -390,6 +473,8 @@ func Build(cfg *config.Resolved, enabled []agents.Agent, cwd, selfPath string) s
 
 	poisonSub := canonHome(poisonSubpaths)
 	denyRead := append(canonHome(denyReadDefaults), cfg.DenyReadPaths...)
+	tokenDeny, tokenRO := classifyTokenDirs(home)
+	denyRead = append(denyRead, tokenDeny...)
 
 	// Deny writes to every ancestor of a protected path between it and home:
 	// renaming a writable parent and symlinking a lookalike back would move
@@ -416,6 +501,7 @@ func Build(cfg *config.Resolved, enabled []agents.Agent, cwd, selfPath string) s
 	allPaths = append(allPaths, rwToolchain...)
 	allPaths = append(allPaths, roLiterals...)
 	allPaths = append(allPaths, roSubpaths...)
+	allPaths = append(allPaths, tokenRO...)
 	allPaths = append(allPaths, configDir)
 
 	var b strings.Builder
@@ -439,6 +525,7 @@ func Build(cfg *config.Resolved, enabled []agents.Agent, cwd, selfPath string) s
 
 	b.WriteString("\n;; 4. Read-only dotfiles, tool dirs and sourced files (before write\n;;    rules so the more specific write grants on their subdirs still win).\n")
 	ro := append(literals(roLiterals), subpaths(roSubpaths)...)
+	ro = append(ro, subpaths(tokenRO)...)
 	rule(&b, "allow file-read*", dedupe(append(ro, regexes(homeRegex(roHomeRegexes))...)))
 
 	b.WriteString("\n;; 5. Workspace visibility.\n")

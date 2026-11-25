@@ -99,6 +99,13 @@ func newStatusCmd() *cobra.Command {
 			}
 
 			fmt.Printf("zshrc:      %s\n", wired)
+
+			if risks := sandbox.DetectPlaintextTokens(rc.Home); len(risks) > 0 {
+				fmt.Println("warnings:")
+				for _, r := range risks {
+					fmt.Printf("  plaintext %s credential in %s — sealed inside the jail, %s\n", r.Tool, r.File, r.Hint)
+				}
+			}
 			return nil
 		},
 	}
