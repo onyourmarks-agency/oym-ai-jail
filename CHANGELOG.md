@@ -5,6 +5,8 @@ SemVer tags; binaries ship via GitHub Releases (`oym-ai-jail update`).
 
 ## [Unreleased]
 
+## [v0.1.0] - 2026-11-25
+
 ### Added
 
 - `oym-ai-jail` CLI: interactive TUI (huh), `run`, `shell`, `shell-init`,
