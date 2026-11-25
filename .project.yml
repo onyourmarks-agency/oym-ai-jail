@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://devops.onyourmarks.tech/schema/project/v1.json
+version: 1
+client: On Your Marks B.V.
+name: OYM AI Jail
+type: library
+
+notes: >-
+  macOS Seatbelt jail for AI coding agents: one CLI to install, configure and keep updated.
+
+stack:
+  - go
+
+contacts:
+  developers:
+    - name: John van Hulsen
+      email: jvanhulsen@onyourmarks.agency
+      roles: [devops]
+  updates:
+    email: jvanhulsen@onyourmarks.agency
+
+links:
+  - name: Repository
+    url: https://github.com/onyourmarks-agency/oym-ai-jail

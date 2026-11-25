@@ -1,0 +1,41 @@
+version: 2
+project_name: oym-ai-jail
+dist: _output
+
+builds:
+  - main: .
+    binary: oym-ai-jail
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/onyourmarks-agency/oym-ai-jail/internal/buildinfo.Version={{ .Tag }}
+      - -X github.com/onyourmarks-agency/oym-ai-jail/internal/buildinfo.GitCommit={{ .ShortCommit }}
+      - -X github.com/onyourmarks-agency/oym-ai-jail/internal/buildinfo.BuildTime={{ .Date }}
+
+archives:
+  - name_template: "{{ .ProjectName }}-{{ .Tag }}-{{ .Os }}-{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+checksum:
+  name_template: "CHECKSUM"
+
+changelog:
+  use: github
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999

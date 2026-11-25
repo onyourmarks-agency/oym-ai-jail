@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # macOS runner: the sandbox tests exercise /usr/bin/sandbox-exec for real.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test (includes sandbox-exec integration tests)
+        run: go test ./...
+      - name: Build
+        run: go build .
