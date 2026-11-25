@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,7 +153,15 @@ func TestProfileSelfProtection(t *testing.T) {
 	if jailed(t, profile, "touch "+filepath.Join(home, ".zshrc")) {
 		t.Fatal("jailed process could write ~/.zshrc")
 	}
-	if !jailed(t, profile, "cat "+filepath.Join(home, ".zshrc")) {
+	// CI runners have no ~/.zshrc — create a stub so the read check tests
+	// the profile, not the file's absence.
+	zshrc := filepath.Join(home, ".zshrc")
+	if _, err := os.Stat(zshrc); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(zshrc, []byte("# test\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !jailed(t, profile, "cat "+zshrc) {
 		t.Fatal("~/.zshrc must stay readable inside the jail")
 	}
 }
