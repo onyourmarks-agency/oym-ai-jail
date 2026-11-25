@@ -10,8 +10,8 @@ jobs:
     # macOS runner: the sandbox tests exercise /usr/bin/sandbox-exec for real.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v4.4.0
+      - uses: actions/setup-go@v5.6.0
         with:
           go-version-file: go.mod
       - name: Vet
